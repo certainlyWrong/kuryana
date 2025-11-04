@@ -621,17 +621,17 @@ class FetchEpisodes(BaseFetch):
             img = cover.find("img")["data-src"]
             link = urljoin(MYDRAMALIST_WEBSITE, cover.find("a")["href"])
 
-            rating = (
-                epi.find("div", class_="rating-panel m-b-0")
-                .find("div")
-                .get_text(strip=True)
-            )
+            rating = None
+            rating_panel = epi.find("div", class_="rating-panel m-b-0")
+            if rating_panel:
+                rating_div = rating_panel.find("div")
+                if rating_div:
+                    rating = rating_div.get_text(strip=True)
 
-            air_date: str | None = None
-            try:
-                air_date = epi.find("div", class_="air-date").get_text(strip=True)
-            except Exception:
-                pass
+            air_date = None
+            air_date_div = epi.find("div", class_="air-date")
+            if air_date_div:
+                air_date = air_date_div.get_text(strip=True)
 
             episodes.append(
                 {
