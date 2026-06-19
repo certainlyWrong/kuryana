@@ -836,6 +836,72 @@ class FetchList(BaseFetch):
         self._get_main_container()
 
 
+class FetchPhotos(BaseFetch):
+    def __init__(self, soup: BeautifulSoup, query: str, code: int, ok: bool) -> None:
+        super().__init__(soup, query, code, ok)
+
+    def _get_main_container(self) -> None:
+        if self.soup is None:
+            return
+
+        container = self.soup.find("div", class_="app-body")
+        if container is None:
+            return
+
+        _film_title = container.find("h1", class_="film-title")
+        if _film_title is not None:
+            self.info["title"] = _film_title.get_text().strip()
+
+        photos: List[Dict[str, Any]] = []
+
+        _photos_ul = container.find("ul", class_=re.compile(r"photos"))
+        if _photos_ul is None:
+            _photos_ul = container.find("div", class_=re.compile(r"photos"))
+
+        if _photos_ul is not None:
+            items = _photos_ul.find_all("li") or _photos_ul.find_all("div", recursive=False)
+            for item in items:
+                _a = item.find("a")
+                _img = item.find("img")
+
+                photo: Dict[str, Any] = {}
+
+                if _a is not None:
+                    href = str(_a.get("href", "")).strip()
+                    if href:
+                        photo["link"] = urljoin(MYDRAMALIST_WEBSITE, href)
+
+                if _img is not None:
+                    for attr in self._img_attrs:
+                        if _img.has_attr(attr):
+                            thumb = str(_img[attr])
+                            photo["image"] = thumb
+                            photo["full_image"] = thumb.replace("m.jpg", "f.jpg")
+                            break
+
+                if photo:
+                    photos.append(photo)
+
+        # fallback: collect all anchored images inside the body that look like photo entries
+        if not photos:
+            for _a in container.find_all("a", href=re.compile(r"/photos/")):
+                _img = _a.find("img")
+                photo = {"link": urljoin(MYDRAMALIST_WEBSITE, str(_a.get("href", "")).strip())}
+                if _img is not None:
+                    for attr in self._img_attrs:
+                        if _img.has_attr(attr):
+                            thumb = str(_img[attr])
+                            photo["image"] = thumb
+                            photo["full_image"] = thumb.replace("m.jpg", "f.jpg")
+                            break
+                photos.append(photo)
+
+        self.info["photos"] = photos
+
+    def _get(self) -> None:
+        self._get_main_container()
+
+
 class FetchEpisodes(BaseFetch):
     def __init__(self, soup, query, code, ok):
         super().__init__(soup, query, code, ok)
