@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import random
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Type, TypeVar, Union
 from urllib.parse import urljoin
@@ -9,7 +10,8 @@ from bs4 import BeautifulSoup
 from bs4.element import NavigableString, Tag
 from camoufox.async_api import AsyncCamoufox
 
-from app import MYDRAMALIST_WEBSITE
+from app import CAMOUFOX_SEMAPHORE, MDL_SEMAPHORE, MYDRAMALIST_WEBSITE
+from app.lib.cache import get_page, set_page
 
 logger = logging.getLogger(__name__)
 
@@ -42,38 +44,61 @@ class Parser:
         if t not in ScrapeTypes.keys():
             raise Exception("Invalid type")
 
-        # parse url
         url = urljoin(ScrapeTypes[t], query)
         if t == "search":
             url = ScrapeTypes[t] + query
 
+        # Tática 5 — cache hit: skip all I/O
+        cached = await get_page(url)
+        if cached is not None:
+            logger.debug("cache hit for %s", url)
+            return cls(BeautifulSoup(cached, "html.parser"), query, 200, True)
+
         ok = True
-        code = 500  # default to 500, internal server error
+        code = 500
         soup = None
 
         try:
+            # Tática 1 — cap concurrent MDL requests
+            async with MDL_SEMAPHORE:
+                # Tática 3 — jitter to desynchronise burst requests
+                await asyncio.sleep(random.uniform(0.2, 0.8))
 
-            def _primp_get() -> primp.Response:
-                client = primp.Client(impersonate="chrome", impersonate_os="linux")
-                return client.get(url)
+                def _primp_get() -> primp.Response:
+                    client = primp.Client(impersonate="chrome", impersonate_os="linux")
+                    return client.get(url)
 
-            resp = await asyncio.to_thread(_primp_get)
-            code = resp.status_code
+                resp = await asyncio.to_thread(_primp_get)
+                code = resp.status_code
 
-            if 200 <= code < 300 and "app-body" in resp.text:
-                soup = BeautifulSoup(resp.text, "html.parser")
-                ok = True
-            else:
-                logger.warning(
-                    "primp returned %s for %s — falling back to camoufox", code, url
-                )
-                async with AsyncCamoufox(headless=True) as browser:
-                    page = await browser.new_page()
-                    await page.goto(url, wait_until="domcontentloaded")
-                    html = await page.content()
-                soup = BeautifulSoup(html, "html.parser")
-                code = 200
-                ok = True
+                # Tática 4 — back off on 429 and retry once
+                if code == 429:
+                    wait = int(resp.headers.get("Retry-After", 60))
+                    logger.warning(
+                        "MDL rate limit (429) for %s — waiting %ds", url, wait
+                    )
+                    await asyncio.sleep(wait)
+                    resp = await asyncio.to_thread(_primp_get)
+                    code = resp.status_code
+
+                if 200 <= code < 300 and "app-body" in resp.text:
+                    await set_page(url, resp.text)  # Tática 5 — cache
+                    soup = BeautifulSoup(resp.text, "html.parser")
+                    ok = True
+                else:
+                    logger.warning(
+                        "primp returned %s for %s — falling back to camoufox", code, url
+                    )
+                    # Tática 1 — only 1 camoufox browser per process
+                    async with CAMOUFOX_SEMAPHORE:
+                        async with AsyncCamoufox(headless=True) as browser:
+                            page = await browser.new_page()
+                            await page.goto(url, wait_until="domcontentloaded")
+                            html = await page.content()
+                    await set_page(url, html)  # Tática 5 — cache camoufox result
+                    soup = BeautifulSoup(html, "html.parser")
+                    code = 200
+                    ok = True
 
         except Exception as exc:
             logger.error("scrape failed for %s: %s", url, exc, exc_info=True)

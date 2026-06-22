@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import random
 import re
 from typing import Any, Dict, List, Tuple
 
@@ -7,7 +8,8 @@ import primp
 from bs4 import BeautifulSoup
 from camoufox.async_api import AsyncCamoufox
 
-from app import MYDRAMALIST_WEBSITE
+from app import CAMOUFOX_SEMAPHORE, MDL_SEMAPHORE, MYDRAMALIST_WEBSITE
+from app.lib.cache import get_calendar, set_calendar
 
 logger = logging.getLogger(__name__)
 
@@ -17,28 +19,58 @@ async def _get_calendar_html(url: str) -> Tuple[int, str]:
 
     Layer 1 — primp: fast TLS-impersonating GET. Calendar pages are
                server-rendered, so no JS is needed on the happy path.
-    Layer 2 — camoufox: headless Firefox navigation when primp is blocked
-               by a Cloudflare challenge.
+    Layer 2 — camoufox: headless Firefox when primp is blocked.
+
+    Rate-limiting controls applied:
+      - MDL_SEMAPHORE caps concurrent MDL requests per process.
+      - CAMOUFOX_SEMAPHORE limits to 1 browser instance per process.
+      - Jitter sleep desynchronises bursts from the RabbitMQ consumer.
+      - 429 back-off waits Retry-After before retrying once with primp.
+      - Results are cached (TTL 30 min) to skip duplicate fetches.
     """
+    # Tática 5 — cache hit: skip all I/O
+    cached = await get_calendar(url)
+    if cached is not None:
+        logger.debug("calendar cache hit for %s", url)
+        return 200, cached
 
-    def _primp_get() -> primp.Response:
-        client = primp.Client(impersonate="chrome", impersonate_os="linux")
-        return client.get(url)
+    # Tática 1 — cap concurrent MDL requests
+    async with MDL_SEMAPHORE:
+        # Tática 3 — jitter to desynchronise burst requests
+        await asyncio.sleep(random.uniform(0.2, 0.8))
 
-    r = await asyncio.to_thread(_primp_get)
-    if 200 <= r.status_code < 300 and "episode-calendar-results" in r.text:
-        return r.status_code, r.text
+        def _primp_get() -> primp.Response:
+            client = primp.Client(impersonate="chrome", impersonate_os="linux")
+            return client.get(url)
 
-    logger.warning(
-        "primp returned %s for %s — falling back to camoufox", r.status_code, url
-    )
+        r = await asyncio.to_thread(_primp_get)
 
-    async with AsyncCamoufox(headless=True) as browser:
-        page = await browser.new_page()
-        await page.goto(url, wait_until="domcontentloaded")
-        html = await page.content()
+        # Tática 4 — back off on 429 and retry once
+        if r.status_code == 429:
+            wait = int(r.headers.get("Retry-After", 60))
+            logger.warning(
+                "MDL rate limit (429) for %s — waiting %ds", url, wait
+            )
+            await asyncio.sleep(wait)
+            r = await asyncio.to_thread(_primp_get)
 
-    return 200, html
+        if 200 <= r.status_code < 300 and "episode-calendar-results" in r.text:
+            await set_calendar(url, r.text)  # Tática 5 — cache
+            return r.status_code, r.text
+
+        logger.warning(
+            "primp returned %s for %s — falling back to camoufox", r.status_code, url
+        )
+
+        # Tática 1 — only 1 camoufox browser per process
+        async with CAMOUFOX_SEMAPHORE:
+            async with AsyncCamoufox(headless=True) as browser:
+                page = await browser.new_page()
+                await page.goto(url, wait_until="domcontentloaded")
+                html = await page.content()
+
+        await set_calendar(url, html)  # Tática 5 — cache camoufox result
+        return 200, html
 
 
 class FetchSeasonal:
