@@ -79,9 +79,11 @@ class Search(BaseSearch):
     def _res_get_url(self, result_container: Union[Tag, NavigableString]) -> str:
         return urljoin(
             MYDRAMALIST_WEBSITE,
-            str(result_container.find("h6", class_="text-primary title")  # type: ignore
-            .find("a")["href"])  # type: ignore
-            .replace("/", ""),
+            str(
+                result_container.find("h6", class_="text-primary title").find("a")[  # type: ignore
+                    "href"
+                ]
+            ).replace("/", ""),  # type: ignore
         )
 
     # search results handler

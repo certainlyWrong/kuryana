@@ -342,45 +342,54 @@ class ListResponse(BaseModel):
 # ─── Seasonal ──────────────────────────────────────────────────────────────────
 
 
-class SeasonalDrama(BaseModel):
-    model_config = ConfigDict(extra="allow")
-
-    id: int
+class SeasonalItem(BaseModel):
+    id: str = Field(description="MDL drama ID.")
     title: str
-    episodes: int
-    ranking: int
-    popularity: int
-    country: str
-    content_type: str
-    type: str
-    synopsis: str
-    released_at: str
+    slug: str = Field(description="URL path slug, e.g. '807236-drama-title'.")
     url: str
-    genres: str
-    thumbnail: str
-    cover: str
-    rating: float
-    timezone: str
-    add_status: bool
+    cover: str = Field(description="Cover image URL.")
+    content_type: str = Field(description="e.g. 'Japanese Drama', 'Chinese Movie'.")
+    release_date: str = Field(description="Release date string, e.g. 'April 1, 2026'.")
+    synopsis: str
+    genres: List[str]
+    category: str = Field(
+        description="Content category grouping: 'Drama', 'Movie', 'TV Show', etc."
+    )
 
 
 # ─── Schedule ──────────────────────────────────────────────────────────────────
 
 
-class ScheduleRelationship(BaseModel):
-    model_config = ConfigDict(extra="allow")
+class ScheduleEpisodeEntry(BaseModel):
+    url: str = Field(description="Full URL to the episode page.")
+    number: str = Field(description="Episode label, e.g. 'Episode 7'.")
+    air_time: str = Field(description="Local air time, e.g. '01:00 AM'.")
+    utc_time: Optional[str] = Field(
+        default=None,
+        description="UTC equivalent shown on MDL, e.g. 'June 21, 2026 12:00 PM'.",
+    )
 
-    id: int
+
+class ScheduleItem(BaseModel):
+    id: str = Field(description="MDL drama ID.")
     title: str
+    slug: str = Field(description="Drama URL slug, e.g. '45671-korea-sings'.")
+    drama_url: str
+    thumbnail: str
+    display_time: str = Field(
+        description="Displayed air time in the page's local timezone."
+    )
+    timezone: str = Field(description="Timezone label, e.g. 'Asia/Seoul'.")
+    episodes: List[ScheduleEpisodeEntry]
+
+
+class ScheduleDay(BaseModel):
+    date: str = Field(description="Full date string, e.g. 'June 21, 2026'.")
+    day_name: str = Field(description="Day of the week, e.g. 'Sunday'.")
+    items: List[ScheduleItem]
 
 
 class ScheduleResponse(BaseModel):
-    items: List[List[Any]] = Field(
-        description=(
-            "7 sublists indexed by day of the week (0 = Monday … 6 = Sunday). "
-            "Each entry references drama IDs from 'relationships'."
-        )
-    )
-    relationships: List[ScheduleRelationship] = Field(
-        description="Full drama objects referenced by the items lists."
+    days: List[ScheduleDay] = Field(
+        description="7 days of the current week, each with its airing episodes."
     )
