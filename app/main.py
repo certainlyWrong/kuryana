@@ -1,3 +1,4 @@
+import asyncio
 from typing import Any, Dict, List
 
 import primp
@@ -195,15 +196,24 @@ async def lists(list_id: str, response: Response) -> Dict[str, Any]:
     description="Dramas airing in the given quarter. `quarter`: 1 = Jan–Mar · 2 = Apr–Jun · 3 = Jul–Sep · 4 = Oct–Dec.",
 )
 async def mdlSeasonal(year: int, quarter: int, response: Response) -> Any:
-    client = primp.Client(impersonate="chrome", impersonate_os="linux")
+    def _fetch() -> primp.Response:
+        client = primp.Client(impersonate="chrome", impersonate_os="linux")
+        return client.post(
+            "https://mydramalist.com/v1/calendar/quarter",
+            data={"quarter": quarter, "year": year},
+        )
 
-    r = client.post(
-        "https://mydramalist.com/v1/calendar/quarter",
-        data={"quarter": quarter, "year": year},
-    )
-
+    r = await asyncio.to_thread(_fetch)
     response.status_code = r.status_code
-    return r.json()
+
+    if not r.ok:
+        return []
+
+    try:
+        return r.json()
+    except Exception:
+        response.status_code = 502
+        return []
 
 
 @app.get(
@@ -214,9 +224,18 @@ async def mdlSeasonal(year: int, quarter: int, response: Response) -> Any:
     description="Episode schedule for the current week, organised by day (0 = Monday … 6 = Sunday).",
 )
 async def mdlSchedule(response: Response) -> Any:
-    client = primp.Client(impersonate="chrome", impersonate_os="linux")
+    def _fetch() -> primp.Response:
+        client = primp.Client(impersonate="chrome", impersonate_os="linux")
+        return client.post("https://mydramalist.com/v1/calendar/week")
 
-    r = client.post("https://mydramalist.com/v1/calendar/week")
-
+    r = await asyncio.to_thread(_fetch)
     response.status_code = r.status_code
-    return r.json()
+
+    if not r.ok:
+        return {}
+
+    try:
+        return r.json()
+    except Exception:
+        response.status_code = 502
+        return {}
