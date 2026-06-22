@@ -1,3 +1,5 @@
+import asyncio
+import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Type, TypeVar, Union
 from urllib.parse import urljoin
@@ -5,8 +7,11 @@ from urllib.parse import urljoin
 import primp
 from bs4 import BeautifulSoup
 from bs4.element import NavigableString, Tag
+from camoufox.async_api import AsyncCamoufox
 
 from app import MYDRAMALIST_WEBSITE
+
+logger = logging.getLogger(__name__)
 
 T = TypeVar("T", bound="Parser")
 
@@ -47,20 +52,31 @@ class Parser:
         soup = None
 
         try:
-            client = primp.Client(impersonate="chrome", impersonate_os="linux")
-            resp = client.get(url)
 
-            # set the main soup var
-            soup = BeautifulSoup(
-                resp.text,
-                "html.parser",  # use `lxml` parser for better speed
-            )
+            def _primp_get() -> primp.Response:
+                client = primp.Client(impersonate="chrome", impersonate_os="linux")
+                return client.get(url)
 
-            # set the status code
+            resp = await asyncio.to_thread(_primp_get)
             code = resp.status_code
-            ok = resp.status_code == 200
 
-        except Exception:
+            if 200 <= code < 300 and "app-body" in resp.text:
+                soup = BeautifulSoup(resp.text, "html.parser")
+                ok = True
+            else:
+                logger.warning(
+                    "primp returned %s for %s — falling back to camoufox", code, url
+                )
+                async with AsyncCamoufox(headless=True) as browser:
+                    page = await browser.new_page()
+                    await page.goto(url, wait_until="domcontentloaded")
+                    html = await page.content()
+                soup = BeautifulSoup(html, "html.parser")
+                code = 200
+                ok = True
+
+        except Exception as exc:
+            logger.error("scrape failed for %s: %s", url, exc, exc_info=True)
             ok = False
 
         return cls(soup, query, code, ok)
@@ -92,8 +108,8 @@ class Parser:
                     "info": p_elem.get_text().strip() if p_elem else "",
                 }
 
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("res_get_err parsing failed for %s: %s", self.query, exc)
 
         return err
 
@@ -150,7 +166,7 @@ class BaseFetch(Parser):
         if self.soup is None:
             return
 
-        details = self.soup.find("ul", class_=classname)  # "list m-a-0 hidden-md-up"
+        details = self.soup.find("ul", class_=classname)
         if details is None:
             return
 
@@ -172,9 +188,8 @@ class BaseFetch(Parser):
                     _title + " ", ""
                 ).strip()  # remove leading and trailing white spaces
 
-        except Exception:
-            # do nothing, if there was a problem
-            pass
+        except Exception as exc:
+            logger.debug("_get_details failed for %s: %s", self.query, exc)
 
     # rating handler, (since it could be N/A which is not convertable to float)
     def _handle_rating(

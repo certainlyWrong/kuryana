@@ -1,3 +1,4 @@
+import logging
 from typing import Any, Optional, Tuple, Union
 from urllib.parse import urljoin
 
@@ -6,6 +7,8 @@ from bs4.element import NavigableString, ResultSet, Tag
 
 from app import MYDRAMALIST_WEBSITE
 from app.handlers.parser import BaseSearch
+
+logger = logging.getLogger(__name__)
 
 
 class Search(BaseSearch):
@@ -58,19 +61,22 @@ class Search(BaseSearch):
         # get the drama type [movie / series]
         try:
             t = _typeyear.split("-")[0].strip()
-        except Exception:
+        except Exception as exc:
+            logger.debug("type parsing failed for search result: %s", exc)
             t = None
 
         # get the year
         try:
             year = int(_year_eps.split(",")[0].strip())
-        except Exception:
+        except Exception as exc:
+            logger.debug("year parsing failed for search result: %s", exc)
             year = None
 
         # get the # of eps if series
         try:
             series_ep = _year_eps.split(",")[1].strip()
-        except Exception:
+        except Exception as exc:
+            logger.debug("series_ep parsing failed for search result: %s", exc)
             series_ep = False
 
         return t, year, series_ep
