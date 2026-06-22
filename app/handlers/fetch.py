@@ -859,7 +859,9 @@ class FetchPhotos(BaseFetch):
             _photos_ul = container.find("div", class_=re.compile(r"photos"))
 
         if _photos_ul is not None:
-            items = _photos_ul.find_all("li") or _photos_ul.find_all("div", recursive=False)
+            items = _photos_ul.find_all("li") or _photos_ul.find_all(
+                "div", recursive=False
+            )
             for item in items:
                 _a = item.find("a")
                 _img = item.find("img")
@@ -886,7 +888,11 @@ class FetchPhotos(BaseFetch):
         if not photos:
             for _a in container.find_all("a", href=re.compile(r"/photos/")):
                 _img = _a.find("img")
-                photo = {"link": urljoin(MYDRAMALIST_WEBSITE, str(_a.get("href", "")).strip())}
+                photo = {
+                    "link": urljoin(
+                        MYDRAMALIST_WEBSITE, str(_a.get("href", "")).strip()
+                    )
+                }
                 if _img is not None:
                     for attr in self._img_attrs:
                         if _img.has_attr(attr):

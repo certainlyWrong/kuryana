@@ -1,10 +1,10 @@
-import asyncio
+import logging
 from typing import Any, Dict, List
 
-import primp
 from fastapi import FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.handlers.calendar import FetchSchedule, FetchSeasonal
 from app.lib.msgspec_json import MsgSpecJSONResponse
 from app.schemas import (
     CastResponse,
@@ -18,9 +18,11 @@ from app.schemas import (
     ReviewsResponse,
     ScheduleResponse,
     SearchResponse,
-    SeasonalDrama,
+    SeasonalItem,
 )
 from app.utils import fetch_func, search_func
+
+logger = logging.getLogger(__name__)
 
 app = FastAPI(
     title="Kuryana",
@@ -55,7 +57,6 @@ async def index() -> Dict[str, Any]:
 )
 async def search(query: str, response: Response) -> Dict[str, Any]:
     code, r = await search_func(query=query)
-
     response.status_code = code
     return r
 
@@ -69,7 +70,6 @@ async def search(query: str, response: Response) -> Dict[str, Any]:
 )
 async def fetch(drama_id: str, response: Response) -> Dict[str, Any]:
     code, r = await fetch_func(query=drama_id, t="drama")
-
     response.status_code = code
     return r
 
@@ -83,7 +83,6 @@ async def fetch(drama_id: str, response: Response) -> Dict[str, Any]:
 )
 async def fetch_cast(drama_id: str, response: Response) -> Dict[str, Any]:
     code, r = await fetch_func(query=f"{drama_id}/cast", t="cast")
-
     response.status_code = code
     return r
 
@@ -97,7 +96,6 @@ async def fetch_cast(drama_id: str, response: Response) -> Dict[str, Any]:
 )
 async def fetch_episodes(drama_id: str, response: Response) -> Dict[str, Any]:
     code, r = await fetch_func(query=f"{drama_id}/episodes", t="episodes")
-
     response.status_code = code
     return r
 
@@ -113,7 +111,6 @@ async def fetch_reviews(
     drama_id: str, response: Response, page: int = 1
 ) -> Dict[str, Any]:
     code, r = await fetch_func(query=f"{drama_id}/reviews?page={page}", t="reviews")
-
     response.status_code = code
     return r
 
@@ -127,7 +124,6 @@ async def fetch_reviews(
 )
 async def fetch_drama_photos(drama_id: str, response: Response) -> Dict[str, Any]:
     code, r = await fetch_func(query=f"{drama_id}/photos", t="photos")
-
     response.status_code = code
     return r
 
@@ -141,7 +137,6 @@ async def fetch_drama_photos(drama_id: str, response: Response) -> Dict[str, Any
 )
 async def person(person_id: str, response: Response) -> Dict[str, Any]:
     code, r = await fetch_func(query=f"people/{person_id}", t="person")
-
     response.status_code = code
     return r
 
@@ -155,7 +150,6 @@ async def person(person_id: str, response: Response) -> Dict[str, Any]:
 )
 async def fetch_person_photos(person_id: str, response: Response) -> Dict[str, Any]:
     code, r = await fetch_func(query=f"people/{person_id}/photos", t="photos")
-
     response.status_code = code
     return r
 
@@ -169,7 +163,6 @@ async def fetch_person_photos(person_id: str, response: Response) -> Dict[str, A
 )
 async def dramalist(user_id: str, response: Response) -> Dict[str, Any]:
     code, r = await fetch_func(query=f"dramalist/{user_id}", t="dramalist")
-
     response.status_code = code
     return r
 
@@ -183,37 +176,28 @@ async def dramalist(user_id: str, response: Response) -> Dict[str, Any]:
 )
 async def lists(list_id: str, response: Response) -> Dict[str, Any]:
     code, r = await fetch_func(query=f"list/{list_id}", t="lists")
-
     response.status_code = code
     return r
 
 
 @app.get(
     "/seasonal/{year}/{quarter}",
-    response_model=List[SeasonalDrama],
+    response_model=List[SeasonalItem],
     tags=["calendar"],
     summary="Seasonal drama list",
     description="Dramas airing in the given quarter. `quarter`: 1 = Jan–Mar · 2 = Apr–Jun · 3 = Jul–Sep · 4 = Oct–Dec.",
 )
 async def mdlSeasonal(year: int, quarter: int, response: Response) -> Any:
-    def _fetch() -> primp.Response:
-        client = primp.Client(impersonate="chrome", impersonate_os="linux")
-        return client.post(
-            "https://mydramalist.com/v1/calendar/quarter",
-            data={"quarter": quarter, "year": year},
-        )
-
-    r = await asyncio.to_thread(_fetch)
-    response.status_code = r.status_code
-
-    if not r.ok:
-        return []
-
     try:
-        return r.json()
-    except Exception:
+        status, data = await FetchSeasonal.scrape(
+            f"https://mydramalist.com/episode-calendar/q{quarter}-{year}"
+        )
+    except Exception as exc:
+        logger.error("FetchSeasonal failed: %s", exc)
         response.status_code = 502
         return []
+    response.status_code = status
+    return data
 
 
 @app.get(
@@ -221,21 +205,16 @@ async def mdlSeasonal(year: int, quarter: int, response: Response) -> Any:
     response_model=ScheduleResponse,
     tags=["calendar"],
     summary="Current week episode schedule",
-    description="Episode schedule for the current week, organised by day (0 = Monday … 6 = Sunday).",
+    description="Episode schedule for the current week, one entry per day.",
 )
 async def mdlSchedule(response: Response) -> Any:
-    def _fetch() -> primp.Response:
-        client = primp.Client(impersonate="chrome", impersonate_os="linux")
-        return client.post("https://mydramalist.com/v1/calendar/week")
-
-    r = await asyncio.to_thread(_fetch)
-    response.status_code = r.status_code
-
-    if not r.ok:
-        return {}
-
     try:
-        return r.json()
-    except Exception:
+        status, data = await FetchSchedule.scrape(
+            "https://mydramalist.com/episode-calendar"
+        )
+    except Exception as exc:
+        logger.error("FetchSchedule failed: %s", exc)
         response.status_code = 502
-        return {}
+        return {"days": []}
+    response.status_code = status
+    return data
