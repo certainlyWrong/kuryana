@@ -16,6 +16,10 @@ dependencies = [
 dev = ["mypy>=1.14.1", "pytest>=8.3.4", "ruff>=0.8.5"]
 
 
+[project.scripts]
+dev = "app:main"
+
+
 [tool.ruff]
 line-length = 88
 indent-width = 4
