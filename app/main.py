@@ -50,6 +50,16 @@ async def index() -> Dict[str, Any]:
 
 
 @app.get(
+    "/health",
+    tags=["health"],
+    summary="Liveness check",
+    description="Confirms the process is up and the event loop is responsive. Does not call MDL.",
+)
+async def health() -> Dict[str, Any]:
+    return {"status": "ok"}
+
+
+@app.get(
     "/search/q/{query}",
     response_model=SearchResponse,
     tags=["search"],
